@@ -5,6 +5,7 @@ Created on Wed Oct 12 09:54:38 2022
 @author: zll
 """
 
+from torch_geometric.nn import global_mean_pool
 import numpy as np
 import networkx as nx
 import os
@@ -186,7 +187,7 @@ class GraphAttentionLayer(nn.Module):
 
 
 class GAT(nn.Module):
-    def __init__(self, nfeat, nhid,nhid2, nclass, dropout, alpha, nheads):
+    def __init__(self, nfeat, nhid, nhid2, nclass, dropout, alpha, nheads):
         """Dense version of GAT."""
         super(GAT, self).__init__()
         self.dropout = dropout
@@ -207,9 +208,10 @@ class GAT(nn.Module):
         x = F.dropout(x, self.dropout, training=self.training)
         x = F.elu(self.out_att(x, adj))
         # return F.log_softmax(x, dim=1)
-
+        # print(x.shape)
         x = x.mean(dim=1)
-        return self.fc(x)
+        # print(x.shape)
+        return F.elu(self.fc(x))
 
 
 # %%
@@ -219,30 +221,14 @@ criterion = torch.nn.CrossEntropyLoss()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 print(f'Training on {device}')
-model = GAT(nfeat=7, nhid=16,nhid2=4, nclass=2,
+model = GAT(nfeat=7, nhid=16, nhid2=4, nclass=2,
             dropout=0.6, alpha=0.2, nheads=8,).to(device)
 
-optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+# optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
 
-def train(train_loader):
-    model.train()
-
-    for data in train_loader:
-        optimizer.zero_grad()
-        X, A, labels = data
-        X, A, labels = X.to(device), A.to(device), labels.to(device)
-        # Forward pass.
-        out = model(X, A)
-        # Compute the graph classification loss.
-        loss = criterion(out, labels)
-        # Calculate gradients.
-        loss.backward()
-        # Updates the models parameters
-        optimizer.step()
-
-
-def test(loader):
+def test(model,loader):
     model.eval()
     correct = 0
     for data in loader:
@@ -261,12 +247,30 @@ def test(loader):
 
 best_val = -1
 for epoch in range(1, 241):
-    train(train_dataset)
-    train_acc = test(train_dataset)
-    val_acc = test(val_dataset)
+    # train(train_dataset)
+    model.train()
+    # optimizer.zero_grad()
+
+    for data in train_dataset:
+        with torch.no_grad():
+            X, A, labels = data
+            X, A, labels = X.to(device), A.to(device), labels.to(device)
+        optimizer.zero_grad()
+        out = model(X, A)
+        loss = criterion(out, labels)
+        loss.backward()
+        # Updates the models parameters
+        optimizer.step()
+
+    # train_acc = test(train_dataset)
+    val_acc = test(model,val_dataset)
+
     if val_acc > best_val:
         best_val = val_acc
         epoch_best = epoch
 
     if epoch % 10 == 0:
-        print(f'Epoch: {epoch:03d}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f} || Best Val Score: {best_val:.4f} (Epoch {epoch_best:03d}) ')
+        print(
+            f'Epoch: {epoch:03d},  Val Acc: {val_acc:.4f} || \
+            Best Val Score: {best_val:.4f} (Epoch {epoch_best:03d}) ')
+        # print(model.state_dict())
